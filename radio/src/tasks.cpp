@@ -19,6 +19,7 @@
  */
 
 #include "opentx.h"
+#include "mixer_scheduler.h"
 
 RTOS_TASK_HANDLE menusTaskId;
 RTOS_DEFINE_STACK(menusStack, MENUS_STACK_SIZE);
@@ -85,26 +86,37 @@ bool isModuleSynchronous(uint8_t moduleIdx)
   return false;
 }
 
-void sendSynchronousPulses(uint8_t runMask)
+// CRSFshot
+//void sendSynchronousPulses(uint8_t runMask)
+void sendSynchronousPulses()
 {
 #if defined(HARDWARE_INTERNAL_MODULE)
-  if ((runMask & (1 << INTERNAL_MODULE)) && isModuleSynchronous(INTERNAL_MODULE)) {
+  // CRSFshot
+  //if ((runMask & (1 << INTERNAL_MODULE)) && isModuleSynchronous(INTERNAL_MODULE)) {
+  if (isModuleSynchronous(INTERNAL_MODULE)) {	  
     if (setupPulsesInternalModule())
       intmoduleSendNextFrame();
   }
 #endif
 
-  if ((runMask & (1 << EXTERNAL_MODULE)) && isModuleSynchronous(EXTERNAL_MODULE)) {
+  // CRSFshot
+  //if ((runMask & (1 << EXTERNAL_MODULE)) && isModuleSynchronous(EXTERNAL_MODULE)) {
+  if (isModuleSynchronous(EXTERNAL_MODULE)) {
     if (setupPulsesExternalModule())
       extmoduleSendNextFrame();
   }
 }
+
+//#define DEBUG_MIXER_SCHEDULER
 
 uint32_t nextMixerTime[NUM_MODULES];
 
 TASK_FUNCTION(mixerTask)
 {
   s_pulses_paused = true;
+
+  mixerSchedulerInit();
+  mixerSchedulerStart();
 
   while (true) {
 #if defined(PCBTARANIS) && defined(SBUS)
@@ -120,7 +132,16 @@ TASK_FUNCTION(mixerTask)
     bluetooth.wakeup();
 #endif
 
-    RTOS_WAIT_TICKS(1);
+    // run mixer at least every 30ms
+    bool timeout = mixerSchedulerWaitForTrigger(30);
+
+#if defined(DEBUG_MIXER_SCHEDULER)
+    GPIO_SetBits(EXTMODULE_TX_GPIO, EXTMODULE_TX_GPIO_PIN);
+    GPIO_ResetBits(EXTMODULE_TX_GPIO, EXTMODULE_TX_GPIO_PIN);
+#endif
+
+    // re-enable trigger
+    mixerSchedulerEnableTrigger();
 
 #if defined(SIMU)
     if (pwrCheck() == e_power_off) {
@@ -132,22 +153,23 @@ TASK_FUNCTION(mixerTask)
     }
 #endif
 
-    uint32_t now = RTOS_GET_MS();
-    uint8_t runMask = 0;
+    // CRSFshot
+    // uint32_t now = RTOS_GET_MS();
+    // uint8_t runMask = 0;
 
-    if (now >= nextMixerTime[0]) {
-      runMask |= (1 << 0);
-    }
+    // if (now >= nextMixerTime[0]) {
+      // runMask |= (1 << 0);
+    // }
 
-#if NUM_MODULES >= 2
-    if (now >= nextMixerTime[1]) {
-      runMask |= (1 << 1);
-    }
-#endif
+// #if NUM_MODULES >= 2
+    // if (now >= nextMixerTime[1]) {
+      // runMask |= (1 << 1);
+    // }
+// #endif
 
-    if (!runMask) {
-      continue;  // go back to sleep
-    }
+    // if (!runMask) {
+      // continue;  // go back to sleep
+    // }
 
     if (!s_pulses_paused) {
       uint16_t t0 = getTmr2MHz();
@@ -183,29 +205,31 @@ TASK_FUNCTION(mixerTask)
       if (t0 > maxMixerDuration)
         maxMixerDuration = t0;
 
-      sendSynchronousPulses(runMask);
+      // CRSFshot
+      //sendSynchronousPulses(runMask);
+      sendSynchronousPulses();
     }
   }
 }
 
-void scheduleNextMixerCalculation(uint8_t module, uint32_t period_ms)
-{
-  // Schedule next mixer calculation time,
+// void scheduleNextMixerCalculation(uint8_t module, uint32_t period_ms)
+// {
+  // // Schedule next mixer calculation time,
 
-  if (isModuleSynchronous(module)) {
-    nextMixerTime[module] += period_ms / RTOS_MS_PER_TICK;
-    if (nextMixerTime[module] < RTOS_GET_TIME()) {
-      // we are late ... let's add some small delay
-      nextMixerTime[module] = (uint32_t) RTOS_GET_TIME() + (period_ms / RTOS_MS_PER_TICK);
-    }
-  }
-  else {
-    // for now assume mixer calculation takes 2 ms.
-    nextMixerTime[module] = (uint32_t) RTOS_GET_TIME() + (period_ms / RTOS_MS_PER_TICK);
-  }
+  // if (isModuleSynchronous(module)) {
+    // nextMixerTime[module] += period_ms / RTOS_MS_PER_TICK;
+    // if (nextMixerTime[module] < RTOS_GET_TIME()) {
+      // // we are late ... let's add some small delay
+      // nextMixerTime[module] = (uint32_t) RTOS_GET_TIME() + (period_ms / RTOS_MS_PER_TICK);
+    // }
+  // }
+  // else {
+    // // for now assume mixer calculation takes 2 ms.
+    // nextMixerTime[module] = (uint32_t) RTOS_GET_TIME() + (period_ms / RTOS_MS_PER_TICK);
+  // }
 
-  DEBUG_TIMER_STOP(debugTimerMixerCalcToUsage);
-}
+  // DEBUG_TIMER_STOP(debugTimerMixerCalcToUsage);
+// }
 
 #define MENU_TASK_PERIOD_TICKS         (50 / RTOS_MS_PER_TICK)    // 50ms
 
